@@ -136,7 +136,7 @@
         /* Stats Grid */
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(4, 1fr);
             gap: 12px;
             margin-bottom: 20px;
         }
@@ -172,9 +172,16 @@
             margin-bottom: 16px;
             padding-bottom: 12px;
             border-bottom: 1px solid #2a2f38;
+            flex-wrap: wrap;
+            gap: 10px;
         }
 
-        .clear-btn {
+        .logs-buttons {
+            display: flex;
+            gap: 10px;
+        }
+
+        .clear-btn, .export-btn {
             background: #2a2f38;
             border: none;
             color: #8892b0;
@@ -183,10 +190,16 @@
             cursor: pointer;
             font-size: 0.8em;
             font-family: monospace;
+            transition: all 0.2s;
         }
 
         .clear-btn:hover {
             background: #3a3f48;
+            color: white;
+        }
+
+        .export-btn:hover {
+            background: #4caf50;
             color: white;
         }
 
@@ -316,7 +329,7 @@
     </div>
 
     <div class="alert-card">
-        <div class="alert-level level-normal" id="alertDisplay">✅ NORMAL</div>
+        <div class="alert-level level-normal" id="alertDisplay">NORMAL</div>
         <div class="alert-message" id="alertMessage">River conditions normal</div>
         <div class="alert-action" id="alertAction">No action required</div>
     </div>
@@ -334,12 +347,19 @@
             <div>🕐 LAST</div>
             <div class="stat-value" id="lastUpdate">--:--:--</div>
         </div>
+        <div class="stat-card">
+            <div> LIVE</div>
+            <div class="stat-value" id="liveIndicator" style="color: #4caf50;">● WAIT</div>
+        </div>
     </div>
 
     <div class="logs-card">
         <div class="logs-header">
             <span>📜 ALERT LOGS</span>
-            <button class="clear-btn" onclick="clearLogs()">CLEAR LOGS</button>
+            <div class="logs-buttons">
+                <button class="export-btn" onclick="exportLogsToCSV()">📥 EXPORT CSV</button>
+                <button class="clear-btn" onclick="clearLogs()">🗑️ CLEAR LOGS</button>
+            </div>
         </div>
         <div class="logs-list" id="logsList">
             <div style="text-align: center; color: #8892b0; padding: 20px;">Waiting for data...</div>
@@ -372,15 +392,59 @@
 
     let client = null;
     let alertLogs = [];
+    let lastAnyMessage = Date.now();
+    
+    // ============================================
+    // EXPORT LOGS TO CSV
+    // ============================================
+    function exportLogsToCSV() {
+        if (alertLogs.length === 0) {
+            alert("No logs to export!");
+            return;
+        }
+        
+        // CSV Headers
+        let csvContent = "\uFEFFDate,Time,Alert,Message,Action,Status Type\n";
+        
+        // Add each log entry
+        alertLogs.forEach(log => {
+            const row = [
+                log.date,
+                log.time,
+                log.alert,
+                `"${log.message.replace(/"/g, '""')}"`, // Escape quotes
+                `"${log.action.replace(/"/g, '""')}"`,
+                log.status_type || 'trigger'
+            ].join(',');
+            csvContent += row + '\n';
+        });
+        
+        // Create filename with timestamp
+        const now = new Date();
+        const filename = `river_monitor_logs_${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}.csv`;
+        
+        // Download the file
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        link.setAttribute('href', url);
+        link.setAttribute('download', filename);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        
+        console.log(`📥 Exported ${alertLogs.length} logs to ${filename}`);
+    }
     
     // ============================================
     // AGGRESSIVE REPETITIVE AUDIO ALERTS (LIFE SAFETY)
     // ============================================
-    let audioEnabled = false;  // Start disabled until user enables
+    let audioEnabled = false;
     let alertLoopInterval = null;
     let currentAlertLevel = null;
     let audioContext = null;
-    let currentPatternRepeat = null;
 
     const ALERT_PATTERNS = {
         YELLOW: {
@@ -455,7 +519,6 @@
             
             oscillator.frequency.value = pattern.frequencies[i];
             
-            // Volume: LOUDER for RED/ORANGE
             let volume = 0.35;
             if (level === 'RED') volume = 0.5;
             if (level === 'ORANGE') volume = 0.4;
@@ -484,7 +547,6 @@
         
         console.log(`🔔 STARTING ${level} ALERTS - REPEATING EVERY ${pattern.repeatEvery/1000} SECONDS 🔔`);
         
-        // Show emergency bar for RED/ORANGE
         const emergencyBar = document.getElementById('emergencyBar');
         if (level === 'RED' || level === 'ORANGE') {
             emergencyBar.style.display = 'block';
@@ -494,20 +556,16 @@
             emergencyBar.style.display = 'none';
         }
         
-        // Play immediately
         playUrgentPattern(level);
         
-        // Vibrate for RED/ORANGE
         if ((level === 'RED' || level === 'ORANGE') && navigator.vibrate) {
             navigator.vibrate([500, 200, 500, 200, 1000, 200, 500]);
         }
         
-        // Repeat
         alertLoopInterval = setInterval(() => {
             if (currentAlertLevel === level && audioEnabled) {
                 playUrgentPattern(level);
                 
-                // Continuous vibration for RED
                 if (level === 'RED' && navigator.vibrate) {
                     navigator.vibrate([1000, 200, 1000]);
                 }
@@ -556,7 +614,6 @@
                 btn.innerHTML = '🔊';
                 btn.style.background = '#4caf50';
                 
-                // If there's an active alert, restart it
                 if (currentAlertLevel && currentAlertLevel !== 'NORMAL') {
                     startRepetitiveAlerts(currentAlertLevel);
                 }
@@ -585,6 +642,27 @@
     }
 
     // ============================================
+    // Live Indicator Monitor
+    // ============================================
+    function startLiveIndicator() {
+        setInterval(() => {
+            const timeSinceLastMsg = Date.now() - lastAnyMessage;
+            const liveIndicator = document.getElementById('liveIndicator');
+            
+            if (timeSinceLastMsg < 15000) {
+                liveIndicator.innerHTML = '● LIVE';
+                liveIndicator.style.color = '#4caf50';
+            } else if (timeSinceLastMsg < 30000) {
+                liveIndicator.innerHTML = '● DEGRADED';
+                liveIndicator.style.color = '#ff9800';
+            } else {
+                liveIndicator.innerHTML = '● OFFLINE';
+                liveIndicator.style.color = '#f44336';
+            }
+        }, 3000);
+    }
+
+    // ============================================
     // Log Management
     // ============================================
     function loadLogs() {
@@ -602,9 +680,11 @@
     }
     
     function clearLogs() {
-        alertLogs = [];
-        saveLogs();
-        renderLogs();
+        if (confirm('Are you sure you want to clear all logs? This action cannot be undone.')) {
+            alertLogs = [];
+            saveLogs();
+            renderLogs();
+        }
     }
     
     function addLog(alert, message, action, statusType) {
@@ -625,7 +705,6 @@
         saveLogs();
         renderLogs();
         
-        // TRIGGER AUDIO ALERTS FOR LIFE SAFETY
         if (statusType !== 'continuous' && statusType !== 'heartbeat') {
             if (alert === 'YELLOW') {
                 startRepetitiveAlerts('YELLOW');
@@ -781,7 +860,6 @@
         const alertMessage = document.getElementById('alertMessage');
         const alertAction = document.getElementById('alertAction');
         const alertStatus = document.getElementById('alertStatus');
-        const lastUpdate = document.getElementById('lastUpdate');
         
         alertDisplay.className = 'alert-level';
         
@@ -823,7 +901,7 @@
         }
         else if (alert === 'DEAD') {
             alertDisplay.classList.add('level-dead');
-            alertDisplay.innerHTML = '💀 DEVICE DEAD 💀';
+            alertDisplay.innerHTML = ' DEVICE OFFLINE ';
             alertMessage.innerHTML = message || 'Device completely unresponsive';
             alertAction.innerHTML = action || 'Send technician for field inspection NOW';
             alertStatus.innerHTML = 'DEAD';
@@ -837,9 +915,6 @@
             alertStatus.innerHTML = 'NORMAL';
             document.title = 'River Monitor | NORMAL';
         }
-        
-        const now = new Date();
-        lastUpdate.innerHTML = now.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
         
         if (statusType !== 'continuous') {
             addLog(alert, alertMessage.innerHTML, alertAction.innerHTML, statusType || 'trigger');
@@ -886,6 +961,14 @@
                 const data = JSON.parse(payload.toString());
                 console.log('📨 Received:', topic, data);
                 
+                // UPDATE TIMESTAMP ON EVERY SINGLE MESSAGE
+                const now = new Date();
+                const lastUpdate = document.getElementById('lastUpdate');
+                lastUpdate.innerHTML = now.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+                
+                // Update last any message timestamp for live indicator
+                lastAnyMessage = Date.now();
+                
                 if (topic === STATUS_TOPIC) {
                     processMessage(data);
                 }
@@ -914,6 +997,7 @@
     updateTime();
     setInterval(updateTime, 1000);
     startHeartbeatMonitor();
+    startLiveIndicator();
     connectMQTT();
     
     // Show audio reminder on page load
