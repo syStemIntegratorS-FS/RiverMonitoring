@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>River Monitor | ILO-SITE-01 | DRM Dashboard | CRITICAL ALERTS</title>
+    <title>DRM River Monitor | Flood Early Warning System</title>
     <script src="https://unpkg.com/mqtt@4.3.7/dist/mqtt.min.js"></script>
     <style>
         * {
@@ -21,11 +21,10 @@
         }
 
         .container {
-            max-width: 700px;
+            max-width: 1000px;
             margin: 0 auto;
         }
 
-        /* Header */
         .header {
             text-align: center;
             margin-bottom: 24px;
@@ -44,6 +43,12 @@
             color: transparent;
         }
 
+        .subtitle {
+            font-size: 0.8em;
+            color: #8892b0;
+            margin-top: 5px;
+        }
+
         .time-display {
             font-size: 2em;
             font-weight: bold;
@@ -57,7 +62,6 @@
             font-size: 0.85em;
         }
 
-        /* Alert Card */
         .alert-card {
             background: #1a1e24;
             border-radius: 24px;
@@ -133,7 +137,6 @@
             border: 1px solid #2a2f38;
         }
 
-        /* Stats Grid */
         .stats-grid {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
@@ -156,7 +159,6 @@
             font-family: 'Courier New', monospace;
         }
 
-        /* Logs Section */
         .logs-card {
             background: #1a1e24;
             border-radius: 20px;
@@ -231,7 +233,6 @@
             margin-top: 4px;
         }
 
-        /* Connection Status */
         .status-bar {
             background: #0f1217;
             border-radius: 60px;
@@ -254,7 +255,6 @@
         .led-dead { background: #757575; box-shadow: none; }
         .led-waiting { background: #ffc107; animation: pulse 1s infinite; }
 
-        /* Audio Reminder & Controls */
         .audio-reminder {
             background: #f44336;
             color: white;
@@ -288,7 +288,6 @@
             transform: scale(1.05);
         }
 
-        /* Scrollbar */
         .logs-list::-webkit-scrollbar {
             width: 6px;
         }
@@ -301,7 +300,6 @@
             border-radius: 10px;
         }
 
-        /* Fullscreen emergency indicator */
         .emergency-bar {
             display: none;
             position: fixed;
@@ -323,7 +321,8 @@
 
 <div class="container">
     <div class="header">
-        <h1>🌊 River Monitor | DRM Dashboard</h1>
+        <h1>🌊 DRM River Monitoring System</h1>
+        <div class="subtitle">ILO-SITE-01 | Flood Early Warning System</div>
         <div class="time-display" id="liveTime">--:--:--</div>
         <div class="date-display" id="liveDate">--</div>
     </div>
@@ -336,7 +335,7 @@
 
     <div class="stats-grid">
         <div class="stat-card">
-            <div>🚨 STATUS</div>
+            <div>🚨 SYSTEM STATUS</div>
             <div class="stat-value" id="alertStatus">NORMAL</div>
         </div>
         <div class="stat-card">
@@ -344,32 +343,32 @@
             <div class="stat-value" id="signalStatus">--</div>
         </div>
         <div class="stat-card">
-            <div>🕐 LAST</div>
+            <div>🕐 LAST UPDATE</div>
             <div class="stat-value" id="lastUpdate">--:--:--</div>
         </div>
         <div class="stat-card">
-            <div> LIVE</div>
+            <div>🔴 COMMS STATUS</div>
             <div class="stat-value" id="liveIndicator" style="color: #4caf50;">● WAIT</div>
         </div>
     </div>
 
     <div class="logs-card">
         <div class="logs-header">
-            <span>📜 ALERT LOGS</span>
+            <span>📜 INCIDENT LOG</span>
             <div class="logs-buttons">
                 <button class="export-btn" onclick="exportLogsToCSV()">📥 EXPORT CSV</button>
                 <button class="clear-btn" onclick="clearLogs()">🗑️ CLEAR LOGS</button>
             </div>
         </div>
         <div class="logs-list" id="logsList">
-            <div style="text-align: center; color: #8892b0; padding: 20px;">Waiting for data...</div>
+            <div style="text-align: center; color: #8892b0; padding: 20px;">Awaiting telemetry data...</div>
         </div>
     </div>
 
     <div class="status-bar">
         <span class="led led-waiting" id="statusLed"></span>
-        <span id="statusText">Connecting to MQTT...</span>
-        <span id="heartbeatTimer" style="float: right; font-family: monospace; font-size: 0.8em;"></span>
+        <span id="statusText">Establishing connection...</span>
+        <span id="telemetryTimer" style="float: right; font-family: monospace; font-size: 0.8em;"></span>
     </div>
 
     <div id="audioReminder" class="audio-reminder" style="display: none;" onclick="enableAudioAndAlerts()">
@@ -388,42 +387,47 @@
     const MQTT_PASSWORD = "Admin12345";
     
     const STATUS_TOPIC = "river/monitor/status";
-    const HEARTBEAT_TOPIC = "river/monitor/heartbeat";
+    const TELEMETRY_TOPIC = "river/monitor/telemetry";  // Professional term
 
     let client = null;
     let alertLogs = [];
     let lastAnyMessage = Date.now();
     
+    // Telemetry timeout tracking
+    let lastTelemetry = null;
+    let systemStatus = "waiting";
+    let telemetryInterval = null;
+
+    const TELEMETRY_TIMEOUT_WARNING = 15000;   // 15 sec - Intermittent
+    const TELEMETRY_TIMEOUT_ALERT = 25000;     // 25 sec - Communication Lost
+    const TELEMETRY_TIMEOUT_DEAD = 35000;      // 35 sec - System Offline
+
     // ============================================
-    // EXPORT LOGS TO CSV
+    // Export Logs to CSV
     // ============================================
     function exportLogsToCSV() {
         if (alertLogs.length === 0) {
-            alert("No logs to export!");
+            alert("No incident records to export!");
             return;
         }
         
-        // CSV Headers
-        let csvContent = "\uFEFFDate,Time,Alert,Message,Action,Status Type\n";
+        let csvContent = "\uFEFFDate,Time,Alert Level,Message,Instruction,Event Type\n";
         
-        // Add each log entry
         alertLogs.forEach(log => {
             const row = [
                 log.date,
                 log.time,
                 log.alert,
-                `"${log.message.replace(/"/g, '""')}"`, // Escape quotes
+                `"${log.message.replace(/"/g, '""')}"`,
                 `"${log.action.replace(/"/g, '""')}"`,
                 log.status_type || 'trigger'
             ].join(',');
             csvContent += row + '\n';
         });
         
-        // Create filename with timestamp
         const now = new Date();
-        const filename = `river_monitor_logs_${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}.csv`;
+        const filename = `DRM_Incident_Log_${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}.csv`;
         
-        // Download the file
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
         const link = document.createElement('a');
         const url = URL.createObjectURL(blob);
@@ -435,11 +439,11 @@
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
         
-        console.log(`📥 Exported ${alertLogs.length} logs to ${filename}`);
+        console.log(`📥 Exported ${alertLogs.length} incident records to ${filename}`);
     }
     
     // ============================================
-    // AGGRESSIVE REPETITIVE AUDIO ALERTS (LIFE SAFETY)
+    // Audio Alerts
     // ============================================
     let audioEnabled = false;
     let alertLoopInterval = null;
@@ -452,35 +456,30 @@
             durations: [1, 1],
             pauseBetween: 0.8,
             repeatEvery: 5000,
-            urgency: "MODERATE"
         },
         ORANGE: {
             frequencies: [880, 1046, 880],
             durations: [0.5, 0.5, 0.5],
             pauseBetween: 0.15,
             repeatEvery: 3000,
-            urgency: "HIGH"
         },
         RED: {
             frequencies: [1046, 880, 1046, 880, 1318, 1046, 880],
             durations: [0.3, 0.3, 0.3, 0.3, 0.6, 0.3, 0.8],
             pauseBetween: 0.08,
             repeatEvery: 1000,
-            urgency: "CRITICAL"
         },
         OFFLINE: {
             frequencies: [523, 493, 440],
             durations: [0.5, 0.5, 0.8],
             pauseBetween: 0.3,
             repeatEvery: 4000,
-            urgency: "WARNING"
         },
         DEAD: {
             frequencies: [440],
             durations: [0.15],
             pauseBetween: 0.4,
             repeatEvery: 2000,
-            urgency: "CRITICAL"
         }
     };
 
@@ -545,7 +544,7 @@
         const pattern = ALERT_PATTERNS[level];
         if (!pattern) return;
         
-        console.log(`🔔 STARTING ${level} ALERTS - REPEATING EVERY ${pattern.repeatEvery/1000} SECONDS 🔔`);
+        console.log(`🔔 ACTIVATING ${level} ALERT PROTOCOL`);
         
         const emergencyBar = document.getElementById('emergencyBar');
         if (level === 'RED' || level === 'ORANGE') {
@@ -584,7 +583,7 @@
         emergencyBar.style.display = 'none';
         
         if (navigator.vibrate) navigator.vibrate(0);
-        console.log('🔇 Alerts stopped');
+        console.log('🔔 Alert protocol deactivated');
     }
 
     function showAudioReminder() {
@@ -607,7 +606,7 @@
         const ctx = initAudio();
         if (ctx) {
             ctx.resume().then(() => {
-                console.log('✅ Audio enabled and resumed');
+                console.log('✅ Audio alerts enabled');
                 hideAudioReminder();
                 
                 const btn = document.getElementById('audioToggle');
@@ -618,7 +617,7 @@
                     startRepetitiveAlerts(currentAlertLevel);
                 }
             }).catch(err => {
-                console.error('Audio resume failed:', err);
+                console.error('Audio initialization failed:', err);
             });
         }
     }
@@ -637,181 +636,72 @@
             const ctx = audioContext;
             if (ctx) ctx.suspend();
             
-            console.log('🔇 Audio disabled by user');
+            console.log('🔇 Audio alerts disabled');
         }
     }
 
     // ============================================
-    // Live Indicator Monitor
+    // Communications Status Monitor
     // ============================================
-    function startLiveIndicator() {
-        setInterval(() => {
-            const timeSinceLastMsg = Date.now() - lastAnyMessage;
-            const liveIndicator = document.getElementById('liveIndicator');
+    function startCommunicationsMonitor() {
+        if (telemetryInterval) clearInterval(telemetryInterval);
+        
+        telemetryInterval = setInterval(() => {
+            const timerSpan = document.getElementById('telemetryTimer');
             
-            if (timeSinceLastMsg < 15000) {
-                liveIndicator.innerHTML = '● LIVE';
-                liveIndicator.style.color = '#4caf50';
-            } else if (timeSinceLastMsg < 30000) {
-                liveIndicator.innerHTML = '● DEGRADED';
-                liveIndicator.style.color = '#ff9800';
-            } else {
-                liveIndicator.innerHTML = '● OFFLINE';
-                liveIndicator.style.color = '#f44336';
-            }
-        }, 3000);
-    }
-
-    // ============================================
-    // Log Management
-    // ============================================
-    function loadLogs() {
-        const saved = localStorage.getItem('river_monitor_logs');
-        if (saved) {
-            try {
-                alertLogs = JSON.parse(saved);
-                renderLogs();
-            } catch(e) {}
-        }
-    }
-    
-    function saveLogs() {
-        localStorage.setItem('river_monitor_logs', JSON.stringify(alertLogs.slice(0, 100)));
-    }
-    
-    function clearLogs() {
-        if (confirm('Are you sure you want to clear all logs? This action cannot be undone.')) {
-            alertLogs = [];
-            saveLogs();
-            renderLogs();
-        }
-    }
-    
-    function addLog(alert, message, action, statusType) {
-        const now = new Date();
-        const timeStr = now.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
-        const dateStr = now.toLocaleDateString('en-PH');
-        
-        alertLogs.unshift({
-            alert: alert,
-            message: message,
-            action: action,
-            time: timeStr,
-            date: dateStr,
-            status_type: statusType
-        });
-        
-        if (alertLogs.length > 100) alertLogs.pop();
-        saveLogs();
-        renderLogs();
-        
-        if (statusType !== 'continuous' && statusType !== 'heartbeat') {
-            if (alert === 'YELLOW') {
-                startRepetitiveAlerts('YELLOW');
-            } else if (alert === 'ORANGE') {
-                startRepetitiveAlerts('ORANGE');
-            } else if (alert === 'RED') {
-                startRepetitiveAlerts('RED');
-            } else if (alert === 'OFFLINE') {
-                startRepetitiveAlerts('OFFLINE');
-            } else if (alert === 'DEAD') {
-                startRepetitiveAlerts('DEAD');
-            } else if (alert === 'NORMAL' || alert === 'RECOVERED') {
-                stopRepetitiveAlerts();
-            }
-        }
-    }
-    
-    function renderLogs() {
-        const logsDiv = document.getElementById('logsList');
-        if (alertLogs.length === 0) {
-            logsDiv.innerHTML = '<div style="text-align: center; color: #8892b0; padding: 20px;">No alerts yet</div>';
-            return;
-        }
-        
-        logsDiv.innerHTML = alertLogs.map(log => {
-            let alertClass = log.alert.toLowerCase();
-            if (alertClass === 'offline') alertClass = 'offline';
-            if (alertClass === 'dead') alertClass = 'dead';
-            
-            return `
-                <div class="log-item log-${alertClass}">
-                    <strong>[${log.alert}]</strong> ${log.message}
-                    ${log.status_type === 'continuous' ? '<span style="color: #ffc107;"> (ONGOING)</span>' : ''}
-                    ${log.status_type === 'timeout' ? '<span style="color: #f44336;"> (SIGNAL LOST)</span>' : ''}
-                    <div class="log-time">${log.date} ${log.time} · ${log.action}</div>
-                </div>
-            `;
-        }).join('');
-    }
-    
-    // ============================================
-    // Heartbeat Monitor (Timeout Detection)
-    // ============================================
-    let lastHeartbeat = null;
-    let heartbeatStatus = "waiting";
-    let heartbeatInterval = null;
-    let lastWaterLevel = "NORMAL";
-
-    const HEARTBEAT_TIMEOUT_WARNING = 15000;
-    const HEARTBEAT_TIMEOUT_ALERT = 25000;
-    const HEARTBEAT_TIMEOUT_DEAD = 35000;
-
-    function startHeartbeatMonitor() {
-        if (heartbeatInterval) clearInterval(heartbeatInterval);
-        
-        heartbeatInterval = setInterval(() => {
-            const timerSpan = document.getElementById('heartbeatTimer');
-            
-            if (lastHeartbeat === null) {
-                timerSpan.innerHTML = '⏳ waiting...';
+            if (lastTelemetry === null) {
+                timerSpan.innerHTML = '⏳ awaiting data...';
                 timerSpan.style.color = '#ffc107';
                 return;
             }
             
             const now = Date.now();
-            const timeSinceLast = now - lastHeartbeat;
+            const timeSinceLast = now - lastTelemetry;
             const secondsSince = Math.floor(timeSinceLast / 1000);
             
-            timerSpan.innerHTML = `📡 ${secondsSince}s since last heartbeat`;
+            timerSpan.innerHTML = `📡 ${secondsSince}s since last telemetry`;
             
-            if (timeSinceLast > HEARTBEAT_TIMEOUT_DEAD) {
+            if (timeSinceLast > TELEMETRY_TIMEOUT_DEAD) {
                 timerSpan.style.color = '#757575';
-                if (heartbeatStatus !== "dead") {
-                    heartbeatStatus = "dead";
-                    updateUI("DEAD", "Device is offline - No communication for 90+ seconds", "Send technician for inspection", "timeout");
-                    addLog("DEAD", "Device offline - heartbeat timeout", "Immediate inspection required", "timeout");
+                if (systemStatus !== "dead") {
+                    systemStatus = "dead";
+                    console.log('💀 SYSTEM OFFLINE - No telemetry for 35+ seconds');
+                    updateUI("DEAD", "System offline - No communication", "Deploy technician for inspection", "timeout");
+                    addLog("DEAD", "System offline - Telemetry timeout", "Immediate field inspection required", "timeout");
                     startRepetitiveAlerts('DEAD');
                 }
             } 
-            else if (timeSinceLast > HEARTBEAT_TIMEOUT_ALERT) {
+            else if (timeSinceLast > TELEMETRY_TIMEOUT_ALERT) {
                 timerSpan.style.color = '#f44336';
-                if (heartbeatStatus !== "alert") {
-                    heartbeatStatus = "alert";
-                    updateUI("OFFLINE", "Device communication lost", "Check MQTT/WiFi connection", "timeout");
-                    addLog("OFFLINE", "Device heartbeat missing", "Connection interrupted", "timeout");
+                if (systemStatus !== "alert" && systemStatus !== "dead") {
+                    systemStatus = "alert";
+                    console.log('🔴 COMMUNICATIONS LOST - No telemetry for 25+ seconds');
+                    updateUI("OFFLINE", "Communications lost", "Verify network connection", "timeout");
+                    addLog("OFFLINE", "Communications lost - Telemetry missing", "Connection interrupted", "timeout");
                     startRepetitiveAlerts('OFFLINE');
                 }
             }
-            else if (timeSinceLast > HEARTBEAT_TIMEOUT_WARNING) {
+            else if (timeSinceLast > TELEMETRY_TIMEOUT_WARNING) {
                 timerSpan.style.color = '#ff9800';
-                if (heartbeatStatus !== "warning") {
-                    heartbeatStatus = "warning";
-                    addLog("WARNING", "Heartbeat irregular", "Check signal strength", "timeout");
+                if (systemStatus !== "warning" && systemStatus !== "alert" && systemStatus !== "dead") {
+                    systemStatus = "warning";
+                    console.log('⚠️ INTERMITTENT SIGNAL - Telemetry delayed');
+                    addLog("WARNING", "Intermittent signal detected", "Check communications link", "timeout");
                 }
-            }
+            }   
             else {
                 timerSpan.style.color = '#4caf50';
-                if (heartbeatStatus !== "online") {
-                    heartbeatStatus = "online";
-                    updateHeartbeatStatus("online", "Online · receiving data");
+                if (systemStatus !== "online") {
+                    systemStatus = "online";
+                    console.log('✅ COMMUNICATIONS RESTORED');
+                    updateCommunicationsStatus("online", "Online · Data receiving");
                 }
             }
         }, 5000);
     }
     
-    function updateHeartbeatStatus(status, message) {
-        heartbeatStatus = status;
+    function updateCommunicationsStatus(status, message) {
+        systemStatus = status;
         
         const led = document.getElementById('statusLed');
         const textSpan = document.getElementById('statusText');
@@ -833,7 +723,7 @@
             case 'alert':
                 led.classList.add('led-offline');
                 textSpan.innerHTML = '🔴 ' + message;
-                signalSpan.innerHTML = 'MISS';
+                signalSpan.innerHTML = 'LOST';
                 break;
             case 'dead':
                 led.classList.add('led-dead');
@@ -847,6 +737,110 @@
         }
     }
     
+    // ============================================
+    // Live Status Indicator
+    // ============================================
+    function startLiveIndicator() {
+        setInterval(() => {
+            const timeSinceLastMsg = Date.now() - lastAnyMessage;
+            const liveIndicator = document.getElementById('liveIndicator');
+            
+            if (timeSinceLastMsg < 15000) {
+                liveIndicator.innerHTML = '● ONLINE';
+                liveIndicator.style.color = '#4caf50';
+            } else if (timeSinceLastMsg < 30000) {
+                liveIndicator.innerHTML = '● DEGRADED';
+                liveIndicator.style.color = '#ff9800';
+            } else {
+                liveIndicator.innerHTML = '● OFFLINE';
+                liveIndicator.style.color = '#f44336';
+            }
+        }, 3000);
+    }
+
+    // ============================================
+    // Log Management
+    // ============================================
+    function loadLogs() {
+        const saved = localStorage.getItem('drm_incident_logs');
+        if (saved) {
+            try {
+                alertLogs = JSON.parse(saved);
+                renderLogs();
+            } catch(e) {}
+        }
+    }
+    
+    function saveLogs() {
+        localStorage.setItem('drm_incident_logs', JSON.stringify(alertLogs.slice(0, 100)));
+    }
+    
+    function clearLogs() {
+        if (confirm('WARNING: This will permanently delete all incident records. Are you sure?')) {
+            alertLogs = [];
+            saveLogs();
+            renderLogs();
+        }
+    }
+    
+    function addLog(alert, message, action, eventType) {
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+        const dateStr = now.toLocaleDateString('en-PH');
+        
+        alertLogs.unshift({
+            alert: alert,
+            message: message,
+            action: action,
+            time: timeStr,
+            date: dateStr,
+            status_type: eventType
+        });
+        
+        if (alertLogs.length > 100) alertLogs.pop();
+        saveLogs();
+        renderLogs();
+        
+        if (eventType !== 'continuous' && eventType !== 'telemetry') {
+            if (alert === 'YELLOW') {
+                startRepetitiveAlerts('YELLOW');
+            } else if (alert === 'ORANGE') {
+                startRepetitiveAlerts('ORANGE');
+            } else if (alert === 'RED') {
+                startRepetitiveAlerts('RED');
+            } else if (alert === 'OFFLINE') {
+                startRepetitiveAlerts('OFFLINE');
+            } else if (alert === 'DEAD') {
+                startRepetitiveAlerts('DEAD');
+            } else if (alert === 'NORMAL' || alert === 'RECOVERED') {
+                stopRepetitiveAlerts();
+            }
+        }
+    }
+    
+    function renderLogs() {
+        const logsDiv = document.getElementById('logsList');
+        if (alertLogs.length === 0) {
+            logsDiv.innerHTML = '<div style="text-align: center; color: #8892b0; padding: 20px;">No incident records</div>';
+            return;
+        }
+        
+        logsDiv.innerHTML = alertLogs.map(log => {
+            let alertClass = log.alert.toLowerCase();
+            if (alertClass === 'offline') alertClass = 'offline';
+            if (alertClass === 'dead') alertClass = 'dead';
+            
+            return `
+                <div class="log-item log-${alertClass}">
+                    <strong>[${log.alert}]</strong> ${log.message}
+                    ${log.status_type === 'continuous' ? '<span style="color: #ffc107;"> (ACTIVE)</span>' : ''}
+                    ${log.status_type === 'timeout' ? '<span style="color: #f44336;"> (COMMS FAILURE)</span>' : ''}
+                    <div class="log-time">${log.date} ${log.time} · ${log.action}</div>
+                </div>
+            `;
+        }).join('');
+    }
+    
     function updateTime() {
         const now = new Date();
         const timeStr = now.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
@@ -855,17 +849,13 @@
         document.getElementById('liveDate').innerHTML = dateStr;
     }
     
-    function updateUI(alert, message, action, statusType) {
+    function updateUI(alert, message, action, eventType) {
         const alertDisplay = document.getElementById('alertDisplay');
         const alertMessage = document.getElementById('alertMessage');
         const alertAction = document.getElementById('alertAction');
         const alertStatus = document.getElementById('alertStatus');
         
         alertDisplay.className = 'alert-level';
-        
-        if (alert !== 'OFFLINE' && alert !== 'DEAD' && alert !== 'WARNING') {
-            lastWaterLevel = alert;
-        }
         
         if (alert === 'RED') {
             alertDisplay.classList.add('level-red');
@@ -886,26 +876,28 @@
         else if (alert === 'YELLOW') {
             alertDisplay.classList.add('level-yellow');
             alertDisplay.innerHTML = '🟡 YELLOW ALERT - MONITOR WATER LEVELS 🟡';
-            alertMessage.innerHTML = message || 'Water levels rising - Be Ready Flooding possible';
+            alertMessage.innerHTML = message || 'Water levels rising - Flooding possible';
             alertAction.innerHTML = action || 'DRM Personnel, monitor and prepare';
             alertStatus.innerHTML = 'ALERT';
             document.title = '🟡 YELLOW ALERT - Monitor 🟡';
         }
         else if (alert === 'OFFLINE') {
             alertDisplay.classList.add('level-offline');
-            alertDisplay.innerHTML = '📡 DEVICE OFFLINE 📡';
-            alertMessage.innerHTML = message || 'No communication from monitoring device';
+            alertDisplay.innerHTML = '📡 COMMUNICATIONS LOST 📡';
+            alertMessage.innerHTML = message || 'No communication from field device';
             alertAction.innerHTML = action || 'Immediate investigation required';
             alertStatus.innerHTML = 'OFFLINE';
-            document.title = '⚠️ DEVICE OFFLINE ⚠️';
+            document.title = '⚠️ COMMUNICATIONS LOST ⚠️';
+            addLog("OFFLINE", alertMessage.innerHTML, alertAction.innerHTML, "timeout");
         }
         else if (alert === 'DEAD') {
             alertDisplay.classList.add('level-dead');
-            alertDisplay.innerHTML = ' DEVICE OFFLINE ';
-            alertMessage.innerHTML = message || 'Device completely unresponsive';
-            alertAction.innerHTML = action || 'Send technician for field inspection NOW';
+            alertDisplay.innerHTML = '💀 SYSTEM OFFLINE 💀';
+            alertMessage.innerHTML = message || 'Field device unresponsive';
+            alertAction.innerHTML = action || 'Deploy technician for inspection';
             alertStatus.innerHTML = 'DEAD';
-            document.title = '💀 DEVICE DEAD 💀';
+            document.title = '💀 SYSTEM OFFLINE 💀';
+            addLog("DEAD", alertMessage.innerHTML, alertAction.innerHTML, "timeout");
         }
         else {
             alertDisplay.classList.add('level-normal');
@@ -913,11 +905,11 @@
             alertMessage.innerHTML = 'River conditions normal';
             alertAction.innerHTML = 'No action required';
             alertStatus.innerHTML = 'NORMAL';
-            document.title = 'River Monitor | NORMAL';
+            document.title = 'DRM River Monitor | NORMAL';
         }
         
-        if (statusType !== 'continuous') {
-            addLog(alert, alertMessage.innerHTML, alertAction.innerHTML, statusType || 'trigger');
+        if (eventType !== 'continuous' && alert !== 'OFFLINE' && alert !== 'DEAD') {
+            addLog(alert, alertMessage.innerHTML, alertAction.innerHTML, eventType || 'trigger');
         }
     }
     
@@ -926,14 +918,14 @@
         if (typeof alert === 'string') alert = alert.toUpperCase();
         
         const message = data.message || '';
-        const action = data.action || '';
-        const statusType = data.status_type || 'initial';
+        const action = data.instruction || data.action || '';
+        const eventType = data.event || data.status_type || 'initial';
         
-        updateUI(alert, message, action, statusType);
+        updateUI(alert, message, action, eventType);
     }
     
     function connectMQTT() {
-        updateHeartbeatStatus('waiting', 'Connecting to MQTT...');
+        updateCommunicationsStatus('waiting', 'Establishing connection...');
         
         client = mqtt.connect(MQTT_HOST, {
             username: MQTT_USERNAME,
@@ -945,62 +937,59 @@
         });
         
         client.on('connect', () => {
-            console.log('✅ MQTT Connected');
+            console.log('✅ MQTT Gateway Connected');
             client.subscribe(STATUS_TOPIC);
-            client.subscribe(HEARTBEAT_TOPIC);
-            updateHeartbeatStatus('online', 'Online · receiving data');
+            client.subscribe(TELEMETRY_TOPIC);
+            updateCommunicationsStatus('online', 'Online · Data receiving');
         });
         
         client.on('error', (err) => {
-            console.error('MQTT Error:', err);
-            updateHeartbeatStatus('offline', 'Connection error');
+            console.error('❌ MQTT Gateway Error:', err);
+            updateCommunicationsStatus('offline', 'Connection error');
         });
         
         client.on('message', (topic, payload) => {
             try {
                 const data = JSON.parse(payload.toString());
-                console.log('📨 Received:', topic, data);
+                console.log('📨 Data received:', topic, data);
                 
-                // UPDATE TIMESTAMP ON EVERY SINGLE MESSAGE
                 const now = new Date();
                 const lastUpdate = document.getElementById('lastUpdate');
                 lastUpdate.innerHTML = now.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
                 
-                // Update last any message timestamp for live indicator
                 lastAnyMessage = Date.now();
                 
                 if (topic === STATUS_TOPIC) {
                     processMessage(data);
                 }
-                else if (topic === HEARTBEAT_TOPIC) {
-                    lastHeartbeat = Date.now();
-                    console.log(`💓 Heartbeat received - Level: ${data.current_level}, Uptime: ${data.uptime}s`);
+                else if (topic === TELEMETRY_TOPIC) {
+                    lastTelemetry = Date.now();
+                    console.log(`📡 Telemetry received - System Status: ${data.current_status}, Uptime: ${data.uptime}s, RSSI: ${data.rssi}dBm`);
                     
-                    if (heartbeatStatus === 'dead' || heartbeatStatus === 'alert') {
-                        addLog("RECOVERED", "Device back online", "Communication restored", "recovery");
-                        updateHeartbeatStatus("online", "Online · receiving data");
+                    if (systemStatus === 'dead' || systemStatus === 'alert') {
+                        addLog("RECOVERED", "Communications restored", "System back online", "recovery");
+                        updateCommunicationsStatus("online", "Online · Data receiving");
                         stopRepetitiveAlerts();
-                    } else if (heartbeatStatus === 'warning') {
-                        updateHeartbeatStatus("online", "Online · receiving data");
+                    } else if (systemStatus === 'warning') {
+                        updateCommunicationsStatus("online", "Online · Data receiving");
                     }
                 }
             } catch(e) {
-                console.error('Parse error:', e);
+                console.error('❌ Parse error:', e);
             }
         });
     }
     
     // ============================================
-    // Initialize
+    // Initialize System
     // ============================================
     loadLogs();
     updateTime();
     setInterval(updateTime, 1000);
-    startHeartbeatMonitor();
+    startCommunicationsMonitor();
     startLiveIndicator();
     connectMQTT();
     
-    // Show audio reminder on page load
     setTimeout(() => {
         if (!audioEnabled) {
             showAudioReminder();
